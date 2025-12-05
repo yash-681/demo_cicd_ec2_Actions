@@ -1,0 +1,104 @@
+name: CD Deploy to EC2 via SSM
+
+# Trigger this workflow after the CI workflow completes
+on:
+  workflow_run:
+    workflows: ["CI Build and Push"]
+    types: 
+      - completed
+
+permissions:
+  id-token: writename: CD Deploy to EC2 via SSM
+
+on:
+  workflow_run:
+    workflows: ["CI Build and Push"]
+    types: 
+      - completed
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-south-1
+  ACCOUNT_ID: 550933156296
+  ECR_REPO: demo_ecr_repo
+  EC2_INSTANCE_ID: i-03d59ac0ab147679e
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          role-to-assume: arn:aws:iam::550933156296:role/EC2-SSM-ECR-Role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Compute ECR URI and image tag
+        id: vars
+        run: |
+          ECR_URI="${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPO }}"
+          IMAGE_TAG=${{ github.event.workflow_run.head_sha }}
+          IMAGE_TAG=${IMAGE_TAG::8}
+
+          echo "ECR_URI=$ECR_URI" >> $GITHUB_OUTPUT
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Trigger SSM deploy on EC2
+        run: |
+          ECR_URI="${{ steps.vars.outputs.ECR_URI }}"
+          IMAGE_TAG="${{ steps.vars.outputs.IMAGE_TAG }}"
+
+          aws ssm send-command \
+            --region "${{ env.AWS_REGION }}" \
+            --instance-ids "${{ env.EC2_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy from GitHub Actions (CI → CD)" \
+            --parameters commands="bash /home/ec2-user/deploy_scripts/deploy_docker.sh ${{ env.AWS_REGION }} ${ECR_URI} ${IMAGE_TAG}"
+  contents: read
+
+env:
+  AWS_REGION: ap-south-1b
+  ACCOUNT_ID: 550933156296
+  ECR_REPO: demo_ecr_repo
+
+
+  # Optional: you can also keep EC2_INSTANCE_ID in repo secrets
+  EC2_INSTANCE_ID: i-0123456789abcdef0
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}   # only on successful CI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          role-to-assume: arn:aws:iam::550933156296:role/GitHubActions-Deploy-Role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Compute ECR URI and image tag
+        id: vars
+        run: |
+          ECR_URI="${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPO }}"
+          # Use the commit SHA from the completed run:
+          IMAGE_TAG=${{ github.event.workflow_run.head_sha }}
+          IMAGE_TAG=${IMAGE_TAG::8}
+          echo "ECR_URI=$ECR_URI" >> $GITHUB_OUTPUT
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Trigger SSM deploy on EC2
+        run: |
+          ECR_URI="${{ steps.vars.outputs.ECR_URI }}"
+          IMAGE_TAG="${{ steps.vars.outputs.IMAGE_TAG }}"
+          INSTANCE_ID="${{ env.EC2_INSTANCE_ID }}"
+          echo "Deploying ${ECR_URI}:${IMAGE_TAG} to ${INSTANCE_ID}"
+          aws ssm send-command \
+            --region "${{ env.AWS_REGION }}" \
+            --instance-ids "${INSTANCE_ID}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy from GitHub Actions (CI -> CD)" \
+            --parameters commands="bash /home/ec2-user/deploy_scripts/deploy_docker.sh ${{ env.AWS_REGION }} ${ECR_URI} ${IMAGE_TAG}"
