@@ -25,3 +25,4 @@ You can expand it later to include:
 
 ---
 
+<img width="1438" height="655" alt="image" src="https://github.com/user-attachments/assets/2c5c8fec-c16d-4fdb-baf0-281cea03f1ed" />
